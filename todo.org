@@ -1,0 +1,18 @@
+* Raft Todos
+** Order of Operations
+Write the server RPCs
+** TODO Setup Servers & State
+** TODO Leader Election
+*** TODO request_vote RPC
+```
+request_vote(term :: integer,
+             candidate_id :: String.t(),
+             last_log_index :: integer,
+             last_log_term :: integer) :: { term :: integer, vote_granted :: boolean }
+
+# return false if term < current_term
+# if voted_for is null or candidate_id and log is at least as up to date as receivers log, grant vote
+```
+** TODO Log Replication
+*** Write Log in DETS
+** TODO Membership

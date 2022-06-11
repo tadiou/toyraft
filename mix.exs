@@ -7,7 +7,8 @@ defmodule Raft.MixProject do
       version: "0.1.0",
       elixir: "~> 1.13",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: description()
     ]
   end
 
@@ -21,8 +22,17 @@ defmodule Raft.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:gen_state_machine, "~> 3.0"},
+      {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
+      {:uuid, "~> 1.1"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
+  end
+
+  defp description do
+    """
+    Just trying to implement what I can of Raft without breaking my brain too much.
+    """
   end
 end
