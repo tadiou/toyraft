@@ -1,6 +1,14 @@
+* Notes
+As part of the design of this, I've really wanted to spend probably more time getting to know and understand Raft. Understanding
+latency as well as consistency. I actually am very familiar with John Ousterhout (his book, A Philosophy of Software Design,
+is something that I give out freely to anyone who'd read), and enjoy a lot about the way he thinks of problems in terms
+of simplicity. So, of course, I addressed Raft as a primary concern, that understanding the methodology behind it
+and what it's trying to solve is the most important part of this project.
 * Raft Todos
 ** Order of Operations
+Really understand the raft protocol
 Write the server RPCs
+
 ** TODO Setup Servers & State
 ** TODO Leader Election
 *** TODO request_vote RPC
