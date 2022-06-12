@@ -7,7 +7,8 @@ defmodule Raft.ServerState do
           votes_obtained: integer,
           other_servers: list,
           last_index_applied: integer,
-          leader_index: integer
+          leader_index: integer,
+          log: [Raft.Entry.t()]
         }
 
   defstruct this_server: nil,
@@ -17,5 +18,6 @@ defmodule Raft.ServerState do
             votes_obtained: 0,
             other_servers: [],
             last_index_applied: 0,
-            leader_index: 0
+            leader_index: 0,
+            log: []
 end
