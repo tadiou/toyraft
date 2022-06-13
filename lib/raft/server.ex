@@ -41,16 +41,17 @@ defmodule Raft.Server do
   # Starts the server with an election. If the server is put into service while there's
   # currently other servers around, it'll fail the election as the term < current term.
   def follower(:cast, :start, server_state) do
-    Logger.info("#{inspect(server_state.this_server)} timeout started")
+    Logger.info("#{inspect(server_state.this_server)}, Follower, timeout started")
 
     {:keep_state_and_data,
      [{{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election}]}
   end
 
-  def follower({:timeout, :election_timeout}, _arg1, _arg2) do
-    require IEx
-    IEx.pry()
+  # When an election is triggered, request votes
+  def follower({:timeout, :election_timeout}, :start_election, data) do
     Logger.info("Starting elections")
+    Logger.info(data)
+    {:next_state, :candidate, data, [{:next_event, :cast, :request_vote}]}
   end
 
   def follower(:cast, :data, data) do
@@ -134,14 +135,6 @@ defmodule Raft.Server do
      [{:next_event, :cast, :start}]}
   end
 
-  # Default cast does nothing
-  def follower(:cast, event, data) do
-    Logger.info("Does nothing")
-    Logger.info(event)
-    Logger.info(data)
-    {:keep_state_and_data, []}
-  end
-
   ###
   # Synchronous Events: All these have to return a message to the caller.
   ###
@@ -166,6 +159,33 @@ defmodule Raft.Server do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_event}}]}
   end
 
+  def follower(:cast, rpc = %{term: term}, data = %Raft.ServerState{current_term: current_term})
+      when term > current_term do
+    Logger.debug("Demoting to follower because RPC term is higher")
+
+    {:next_state, :follower,
+     %Raft.ServerState{data | current_term: term, voted_for: nil, votes_obtained: 0},
+     [
+       {{:timeout, :heartbeat}, :infinity, :send_heartbeat},
+       {{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election},
+       {:next_event, :cast, rpc}
+     ]}
+  end
+
+  # Default Request
+
+  def follower(:cast, event, data) do
+    Logger.info("empty follower request")
+    Logger.info(event)
+    Logger.info(data)
+    {:keep_state_and_data, []}
+  end
+
+  def candidate({:timeout, :election_timeout}, :start_election, data) do
+    Logger.debug("Election timeout as candidate")
+    {:keep_state_and_data, [{:next_event, :cast, :request_vote}]}
+  end
+
   def candidate(
         :cast,
         %Raft.RequestVoteResponse{granted: true},
@@ -176,17 +196,40 @@ defmodule Raft.Server do
       ) do
     votes_obtained = previous_votes_obtained + 1
     servers_count = servers |> length
-    votes_needed = servers_count / 2
+    votes_needed = (servers_count / 2) |> Float.ceil() |> trunc()
 
-    Logger.info(
-      "#{data.this_server} received a vote, #{votes_obtained} obtained, #{votes_needed} needed"
-    )
+    case data.this_server do
+      name when is_tuple(name) ->
+        Logger.info(
+          "#{data.this_server |> Tuple.to_list() |> Enum.join()} received a vote, #{votes_obtained} obtained, #{votes_needed} needed"
+        )
+
+      name ->
+        Logger.info(
+          "#{data.this_server} received a vote, #{votes_obtained} obtained, #{votes_needed} needed"
+        )
+    end
 
     if votes_obtained > votes_needed do
-      # Become Leader
+      {:next_state, :leader, %Raft.ServerState{data | votes_obtained: votes_obtained},
+       [{{:timeout, :election_timeout}, :infinity, :ok}, {:next_event, :cast, :init}]}
     else
       {:keep_state, %Raft.ServerState{data | votes_obtained: votes_obtained}, []}
     end
+  end
+
+  # Return to base state
+  def candidate(:cast, rpc = %{term: term}, data = %Raft.ServerState{current_term: current_term})
+      when term > current_term do
+    Logger.debug("Demoting to follower because RPC term is higher")
+
+    {:next_state, :follower,
+     %Raft.ServerState{data | current_term: term, voted_for: nil, votes_obtained: 0},
+     [
+       {{:timeout, :heartbeat}, :infinity, :send_heartbeat},
+       {{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election},
+       {:next_event, :cast, rpc}
+     ]}
   end
 
   # send RequestVote to all other servers
@@ -198,22 +241,18 @@ defmodule Raft.Server do
           other_servers: other_servers,
           votes_obtained: votes_obtained,
           current_term: current_term,
-          log: [
-            %{from_term: this_servers_last_term, at_index: this_servers_last_index} =
-              %Raft.Entry{}
-            | _rest
-          ]
+          last_index_applied: last_index_applied
         }
       ) do
-    Logger.info("#{data.this_server} is requesting votes from other servers")
+    Logger.info("#{this_server_name(data.this_server)} is requesting votes from other servers")
 
     other_servers
     |> Enum.each(fn server ->
       GenStateMachine.cast(server, %Raft.RequestVote{
         term: current_term + 1,
         candidates_name: this_server,
-        candidates_last_index_applied: this_servers_last_index,
-        candidates_last_term: this_servers_last_term
+        candidates_last_index_applied: last_index_applied,
+        candidates_last_term: current_term
       })
     end)
 
@@ -224,5 +263,67 @@ defmodule Raft.Server do
          voted_for: this_server,
          votes_obtained: votes_obtained + 1
      }, [{{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election}]}
+  end
+
+  # Default Request
+
+  def candidate(:cast, event, data) do
+    Logger.info("empty candidate request")
+    Logger.info(event)
+    Logger.info(data)
+    {:keep_state_and_data, []}
+  end
+
+  def leader(:cast, :init, data = %Raft.ServerState{}) do
+    Logger.info("#{this_server_name(data.this_server)} has been elected and is now the leader")
+
+    Logger.info(data.other_servers)
+    # send heartbeat
+    heartbeat_events =
+      data.other_servers
+      |> Enum.map(fn {name, node} ->
+        {{:timeout, {:heartbeat, {name, node}}}, 0, :send_heartbeat}
+      end)
+
+    {:keep_state, data, heartbeat_events}
+  end
+
+  def leader({:timeout, {:heartbeat, _server}}, :send_heartbeat, %Raft.ServerState{
+        this_server: this_server
+      }) do
+    Logger.debug("#{this_server_name(this_server)} heartbeats")
+
+    # Should be sending append, but I'm pausing now
+    {:keep_state_and_data, []}
+  end
+
+  def leader(:cast, rpc = %{term: term}, data = %Raft.ServerState{current_term: current_term})
+      when term > current_term do
+    Logger.debug("Demoting to follower because RPC term is higher")
+
+    {:next_state, :follower,
+     %Raft.ServerState{data | current_term: term, voted_for: nil, votes_obtained: 0},
+     [
+       {{:timeout, :heartbeat}, :infinity, :send_heartbeat},
+       {{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election},
+       {:next_event, :cast, rpc}
+     ]}
+  end
+
+  def leader(:cast, event, data) do
+    Logger.info("empty leader request")
+    Logger.info(event)
+    Logger.info(data)
+    {:keep_state_and_data, []}
+  end
+
+  defp this_server_name(this_server) do
+    case this_server do
+      name when is_tuple(name) ->
+        this_server |> Tuple.to_list() |> Enum.join()
+
+      name ->
+        name
+    end
   end
 end

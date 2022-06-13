@@ -2,7 +2,7 @@ defmodule Raft.FollowerTest do
   use ExUnit.Case, async: true
   @moduletag timeout: :infinity
 
-  describe "follower tests" do
+  describe "Voting tests" do
     test "returns a vote for the requester" do
       leader = self()
       this_server = node()
