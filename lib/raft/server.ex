@@ -8,8 +8,6 @@ defmodule Raft.Server do
 
   :keep_state means we're going to continue to be in the current state, which is :follower,
   :candidate, or :leader.
-
-
   """
 
   require Logger
@@ -59,6 +57,8 @@ defmodule Raft.Server do
     IO.inspect(data, label: "Data")
     {:keep_state_and_data, []}
   end
+
+  # TODO: Write leader_index when the write comes from the leader method here
 
   # Writes as the follower
   # TODO: Didn't get an RPC for this yet
@@ -166,6 +166,63 @@ defmodule Raft.Server do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_event}}]}
   end
 
-  # defdelegate follower, to: Raft.Follower
-  # defdelegate candidate, to: Raft.Candidate
+  def candidate(
+        :cast,
+        %Raft.RequestVoteResponse{granted: true},
+        data = %Raft.ServerState{
+          votes_obtained: previous_votes_obtained,
+          other_servers: servers
+        }
+      ) do
+    votes_obtained = previous_votes_obtained + 1
+    servers_count = servers |> length
+    votes_needed = servers_count / 2
+
+    Logger.info(
+      "#{data.this_server} received a vote, #{votes_obtained} obtained, #{votes_needed} needed"
+    )
+
+    if votes_obtained > votes_needed do
+      # Become Leader
+    else
+      {:keep_state, %Raft.ServerState{data | votes_obtained: votes_obtained}, []}
+    end
+  end
+
+  # send RequestVote to all other servers
+  def candidate(
+        :cast,
+        :request_vote,
+        data = %Raft.ServerState{
+          this_server: this_server,
+          other_servers: other_servers,
+          votes_obtained: votes_obtained,
+          current_term: current_term,
+          log: [
+            %{from_term: this_servers_last_term, at_index: this_servers_last_index} =
+              %Raft.Entry{}
+            | _rest
+          ]
+        }
+      ) do
+    Logger.info("#{data.this_server} is requesting votes from other servers")
+
+    other_servers
+    |> Enum.each(fn server ->
+      GenStateMachine.cast(server, %Raft.RequestVote{
+        term: current_term + 1,
+        candidates_name: this_server,
+        candidates_last_index_applied: this_servers_last_index,
+        candidates_last_term: this_servers_last_term
+      })
+    end)
+
+    {:keep_state,
+     %Raft.ServerState{
+       data
+       | current_term: current_term + 1,
+         voted_for: this_server,
+         votes_obtained: votes_obtained + 1
+     }, [{{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election}]}
+  end
 end
