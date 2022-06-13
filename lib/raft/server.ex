@@ -172,6 +172,16 @@ defmodule Raft.Server do
      ]}
   end
 
+  def follower(
+        :cast,
+        %Raft.AppendEntry{},
+        data = %Raft.ServerState{
+          current_term: current_term,
+          this_server: this_server
+        }
+      ) do
+  end
+
   # Default Request
 
   def follower(:cast, event, data) do
@@ -275,9 +285,10 @@ defmodule Raft.Server do
   end
 
   def leader(:cast, :init, data = %Raft.ServerState{}) do
-    Logger.info("#{this_server_name(data.this_server)} has been elected and is now the leader")
+    Logger.info(
+      "#{this_server_name(data.this_server)} has been elected and is now the leader, initializing heartbeat"
+    )
 
-    Logger.info(data.other_servers)
     # send heartbeat
     heartbeat_events =
       data.other_servers
@@ -288,13 +299,12 @@ defmodule Raft.Server do
     {:keep_state, data, heartbeat_events}
   end
 
-  def leader({:timeout, {:heartbeat, _server}}, :send_heartbeat, %Raft.ServerState{
+  def leader({:timeout, {:heartbeat, server}}, :send_heartbeat, %Raft.ServerState{
         this_server: this_server
       }) do
     Logger.debug("#{this_server_name(this_server)} heartbeats")
 
-    # Should be sending append, but I'm pausing now
-    {:keep_state_and_data, []}
+    {:keep_state_and_data, [{:next_event, :cast, {:send_append_entry, server}]}
   end
 
   def leader(:cast, rpc = %{term: term}, data = %Raft.ServerState{current_term: current_term})
@@ -308,6 +318,33 @@ defmodule Raft.Server do
        {{:timeout, :election_timeout}, Raft.GenTimeout.call(), :start_election},
        {:next_event, :cast, rpc}
      ]}
+  end
+
+  def leader(
+        {:timeout, {:heartbeat, to_server}},
+        :send_heartbeat,
+        data = %Raft.ServerState{
+          this_server: this_server,
+          current_term: current_term,
+          last_index_applied: last_index_applied
+        }
+      ) do
+    heartbeat = %Raft.AppendEntry{
+      term: current_term,
+      who_is_the_leader: this_server,
+      previous_index_applied: last_index_applied,
+      # this isn't right, but it's fine for testing
+      previous_term: current_term - 1
+    }
+
+    Logger.debug(
+      "#{this_server_name(this_server)} is sending a heartbeat to #{this_server_name(to_server)}"
+    )
+
+    GenStateMachine.cast(to_server, heartbeat)
+
+    {:keep_state, data,
+     [{{:timeout}, {:heartbeat, to_server}}, Raft.GenTimeout.call(), :send_heartbeat]}
   end
 
   def leader(:cast, event, data) do

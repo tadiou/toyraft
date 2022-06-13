@@ -3,7 +3,8 @@ defmodule Raft.AppendEntry do
           term: integer,
           who_is_the_leader: atom | nil,
           previous_index_applied: integer,
-          previous_term: list(Raft.Entry.t())
+          previous_term: integer,
+          entries_to_store: [Raft.Entry.t()]
         }
   defstruct term: -1,
             who_is_the_leader: nil,

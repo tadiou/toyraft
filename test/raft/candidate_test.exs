@@ -3,7 +3,7 @@ defmodule Raft.CandidateTest do
   @moduletag timeout: :infinity
 
   describe "Voting tests" do
-    test "Converts a follower to candidate" do
+    test "Successfully runs an election that results in a leader and a follower" do
       other_server = :othernode@nohost
       this_server = :thisnode@nohost
 
@@ -32,9 +32,6 @@ defmodule Raft.CandidateTest do
       resp = :sys.get_state(this_server_pid)
       require IEx
       IEx.pry()
-    end
-
-    test "returns a vote against the requester" do
     end
   end
 end
